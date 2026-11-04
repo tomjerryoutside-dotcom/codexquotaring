@@ -1,0 +1,18 @@
+# macOS metadata
+.DS_Store
+._*
+
+# Build output and local caches
+*.app/
+.build/
+build/
+DerivedData/
+*.dSYM/
+
+# Local backups and device/account verification records
+previous-*/
+verification.json
+*.log
+.env
+.env.*
+!.env.example
