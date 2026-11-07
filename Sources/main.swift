@@ -44,8 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, self.details.isVisible else { return }; self.detailsView.needsDisplay = true
         }
         refresh()
-        // Configuration opens first. AX requests happen only after the user's explicit button click.
-        if !prefs.bool(forKey: "calibrated") || !AXIsProcessTrusted() { showSettings() }
+        if !prefs.bool(forKey: "calibrated") { showSettings() }
     }
 
     @objc func refresh() {
@@ -67,27 +66,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func tick() {
-        // Do not read target bounds until the user has granted Accessibility and calibrated.
-        guard !paused, !locating, prefs.bool(forKey: "calibrated"), let frame = anchor.frontWindowFrame() else {
+        guard !paused, !locating, prefs.bool(forKey: "calibrated"), let window = anchor.visibleWindow() else {
             hide(); return
         }
+        let frame = window.frame
         let diameter = CGFloat(diameterSetting)
         let center = Geometry.anchor(window: frame, x: CGFloat(prefs.double(forKey: "offsetX")), bottom: CGFloat(prefs.double(forKey: "offsetBottom")))
         let rect = Geometry.ringFrame(center: center, diameter: diameter)
         guard frame.contains(rect) else { hide(); return }
         let mouse = NSEvent.mouseLocation
         let down = CGEventSource.buttonState(.combinedSessionState, button: .left)
-        if down && !mouseWasDown && rect.insetBy(dx: -4, dy: -4).contains(mouse) { suppressed = true }
+        let overRing = rect.insetBy(dx: -4, dy: -4).contains(mouse)
+        let overDetails = details.isVisible && details.frame.insetBy(dx: -12, dy: -8).contains(mouse)
+        let targetUnderMouse = (overRing || overDetails) && [window.number, ring.windowNumber, details.windowNumber]
+            .contains(NSWindow.windowNumber(at: mouse, belowWindowWithWindowNumber: 0))
+        if down && !mouseWasDown && overRing && targetUnderMouse { suppressed = true }
         mouseWasDown = down
         if suppressed && !rect.insetBy(dx: -20, dy: -20).contains(mouse) && !details.frame.contains(mouse) && !down { suppressed = false }
         if suppressed { hide(); return }
         let light = prefs.bool(forKey: "lightTheme")
         if ringView.light != light { ringView.light = light; detailsView.light = light; detailsView.needsDisplay = true }
         if ring.frame != rect { ring.setFrame(rect, display: true) }
-        if !ring.isVisible { ring.orderFrontRegardless() }
+        // Stay immediately above Codex, beneath windows that cover Codex. Never activate it.
+        ring.order(.above, relativeTo: window.number)
         if !lastVisible, Date().timeIntervalSince(lastFetch) > 120 { refresh() }
         lastVisible = true
-        let hovering = rect.contains(mouse) || (details.isVisible && details.frame.insetBy(dx: -12, dy: -8).contains(mouse))
+        let hovering = (rect.contains(mouse) || overDetails) && targetUnderMouse
         if hovering {
             let stale = detailsView.snapshot.map { Date().timeIntervalSince($0.fetchedAt) > 300 } ?? false
             let message = error.map { detailsView.snapshot == nil ? $0 : "\($0)；显示上次数据" } ?? (stale ? "数据已超过 5 分钟，等待刷新" : nil)
@@ -101,7 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let y = min(max(center.y-h/2, screen.minY+8), screen.maxY-h-8)
             let detailFrame = NSRect(x: x, y: y, width: w, height: h)
             if details.frame != detailFrame { details.setFrame(detailFrame, display: true) }
-            if !details.isVisible { detailsView.needsDisplay = true; details.orderFrontRegardless() }
+            if !details.isVisible { detailsView.needsDisplay = true }
+            details.order(.above, relativeTo: ring.windowNumber)
         } else { details.orderOut(nil) }
     }
     func hide() {
@@ -123,9 +128,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         _ = label("常驻数字 · 悬停查看详情", y: 335, height: 30, size: 20)
         _ = label("圆环中只显示数字。悬停显示重置时间、倒计时、重置卡数量和最近到期时间。点击会穿透到原控件。", y: 279, height: 46)
-        let access = NSButton(title: "1. 授权窗口定位", target: self, action: #selector(requestAccessibility)); access.bezelStyle = .rounded; access.frame = NSRect(x: 24, y: 231, width: 170, height: 32); content.addSubview(access)
-        _ = label("只读取 Codex 前台窗口的位置和尺寸。", x: 205, y: 236, width: 280, height: 25, size: 11)
-        let locate = NSButton(title: "2. 定位原控件（5 秒）", target: self, action: #selector(calibrate)); locate.bezelStyle = .rounded; locate.frame = NSRect(x: 24, y: 184, width: 190, height: 32); content.addSubview(locate)
+        _ = label("窗口跟随已就绪，无需辅助功能授权。", y: 236, height: 25, size: 12)
+        let locate = NSButton(title: "定位原控件（5 秒）", target: self, action: #selector(calibrate)); locate.bezelStyle = .rounded; locate.frame = NSRect(x: 24, y: 184, width: 190, height: 32); content.addSubview(locate)
         _ = label("点击后切回 Codex，把鼠标停在原用量圆圈中心，等待 5 秒。", x: 225, y: 177, width: 265, height: 43, size: 11)
         _ = label("圆环大小", y: 135, width: 90, height: 24)
         let slider = NSSlider(value: diameterSetting, minValue: 28, maxValue: 44, target: self, action: #selector(sizeChanged(_:)))
@@ -135,22 +139,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = label("首次定位后跟随窗口左下角；界面缩放或导航布局改变时重新定位。时间均为北京时间。", y: 18, height: 42, size: 11)
         settings = window; window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
     }
-    @objc func requestAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        if AXIsProcessTrustedWithOptions(options) { statusLabel?.stringValue = "窗口定位已授权，可以进行第 2 步。" }
-        else {
-            statusLabel?.stringValue = "请在系统设置 → 隐私与安全性 → 辅助功能中启用“额度环”，再回来定位。"
-            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-        }
-    }
     @objc func calibrate() {
-        guard AXIsProcessTrusted() else { statusLabel?.stringValue = "请先完成第 1 步的窗口定位授权。"; return }
         locating = true; hide(); settings?.orderOut(nil)
         DispatchQueue.main.asyncAfter(deadline: .now()+5) { [weak self] in
             guard let self else { return }; self.locating = false
-            guard let frame = self.anchor.frontWindowFrame() else {
+            guard let window = self.anchor.visibleWindow(requireFrontmost: true) else {
                 self.showSettings(); self.statusLabel?.stringValue = "未定位：请切回 Codex 主窗口并保持前台，再试一次。"; return
             }
+            let frame = window.frame
             let point = NSEvent.mouseLocation
             guard frame.insetBy(dx: 12, dy: 30).contains(point), point.x-frame.minX < min(140, frame.width/3) else {
                 self.showSettings(); self.statusLabel?.stringValue = "鼠标不在左侧导航区域，请重新定位。"; return

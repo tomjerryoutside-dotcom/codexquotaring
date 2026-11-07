@@ -13,30 +13,38 @@ enum Geometry {
     }
 }
 
-/// Only the front window's bounds/minimized flag are read. No UI tree or chat contents.
+struct AnchoredWindow {
+    let number: Int
+    let frame: CGRect
+}
+
+/// Window-server metadata only: no screenshots, window titles, or UI tree.
 final class WindowAnchor {
     let bundleID = "com.openai.codex"
-    func frontWindowFrame() -> CGRect? {
-        guard AXIsProcessTrusted(), let app = NSWorkspace.shared.frontmostApplication,
-              app.bundleIdentifier == bundleID else { return nil }
-        let ax = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetMessagingTimeout(ax, 0.15)
-        var raw: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(ax, kAXFocusedWindowAttribute as CFString, &raw) == .success,
-              let raw, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
-        let window = unsafeBitCast(raw, to: AXUIElement.self)
-        var minimized: CFTypeRef?
-        AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimized)
-        if (minimized as? Bool) == true { return nil }
-        var p: CFTypeRef?, s: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &p) == .success,
-              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &s) == .success,
-              let p, let s, CFGetTypeID(p) == AXValueGetTypeID(), CFGetTypeID(s) == AXValueGetTypeID() else { return nil }
-        var origin = CGPoint.zero, size = CGSize.zero
-        guard AXValueGetValue(unsafeBitCast(p, to: AXValue.self), .cgPoint, &origin),
-              AXValueGetValue(unsafeBitCast(s, to: AXValue.self), .cgSize, &size), size.width > 200, size.height > 200,
-              let primary = NSScreen.screens.first else { return nil }
-        return Geometry.cocoaRect(axOrigin: origin, size: size, primaryTop: primary.frame.maxY)
+
+    func visibleWindow(requireFrontmost: Bool = false) -> AnchoredWindow? {
+        if requireFrontmost && NSWorkspace.shared.frontmostApplication?.bundleIdentifier != bundleID { return nil }
+        let pids = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { !$0.isHidden && !$0.isTerminated }.map { $0.processIdentifier })
+        guard !pids.isEmpty, let primary = NSScreen.screens.first,
+              let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        return Self.selectWindow(windows, ownerPIDs: pids, primaryTop: primary.frame.maxY)
+    }
+
+    static func selectWindow(_ windows: [[String: Any]], ownerPIDs: Set<pid_t>, primaryTop: CGFloat) -> AnchoredWindow? {
+        // The list is front-to-back even when a different app owns the front window.
+        for window in windows {
+            guard let pid = window[kCGWindowOwnerPID as String] as? Int32, ownerPIDs.contains(pid),
+                  (window[kCGWindowIsOnscreen as String] as? Bool) == true,
+                  (window[kCGWindowLayer as String] as? Int) == 0,
+                  let alpha = window[kCGWindowAlpha as String] as? Double, alpha > 0,
+                  let number = window[kCGWindowNumber as String] as? Int, number > 0,
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+                  rect.width > 200, rect.height > 200 else { continue }
+            return AnchoredWindow(number: number, frame: Geometry.cocoaRect(axOrigin: rect.origin, size: rect.size, primaryTop: primaryTop))
+        }
+        return nil
     }
 }
 
@@ -138,7 +146,7 @@ final class OverlayPanel: NSPanel {
     override var canBecomeMain: Bool { false }
     init(size: NSSize, shadow: Bool) {
         super.init(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        isOpaque = false; backgroundColor = .clear; hasShadow = shadow; level = .floating
+        isOpaque = false; backgroundColor = .clear; hasShadow = shadow; level = .normal
         ignoresMouseEvents = true; hidesOnDeactivate = false; isReleasedWhenClosed = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         animationBehavior = .none

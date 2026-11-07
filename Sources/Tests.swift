@@ -51,5 +51,25 @@ func runTests() {
     expect(Geometry.anchor(window: moved, x: 32, bottom: 108) == CGPoint(x: center.x+200, y: center.y+75), "anchor follows translation")
     let resized = CGRect(x: frame.minX, y: frame.minY-100, width: 1100, height: 700)
     expect(Geometry.anchor(window: resized, x: 32, bottom: 108).y == center.y-100, "anchor follows bottom edge during resize")
-    print("PASS: \(count) model and geometry checks")
+    func window(_ number: Int, pid: Int32 = 42, onscreen: Bool = true, layer: Int = 0,
+                alpha: Double = 1, width: CGFloat = 900) -> [String: Any] {
+        [kCGWindowNumber as String: number, kCGWindowOwnerPID as String: pid,
+         kCGWindowIsOnscreen as String: onscreen, kCGWindowLayer as String: layer,
+         kCGWindowAlpha as String: alpha,
+         kCGWindowBounds as String: CGRect(x: -1200, y: 100, width: width, height: 600).dictionaryRepresentation]
+    }
+    func select(_ windows: [[String: Any]]) -> AnchoredWindow? {
+        WindowAnchor.selectWindow(windows, ownerPIDs: [42], primaryTop: 1080)
+    }
+    let background = select([window(10, pid: 99), window(20)])
+    expect(background?.number == 20 && background?.frame == frame, "visible Codex remains anchored behind an active browser")
+    expect(select([window(20, onscreen: false)]) == nil, "minimized or off-space window is excluded")
+    expect(select([window(20, alpha: 0)]) == nil, "transparent window is excluded")
+    expect(select([window(20, layer: 3)]) == nil, "floating utility window is not a main window")
+    expect(select([window(20, width: 100)]) == nil, "small auxiliary window is excluded")
+    expect(select([window(20, pid: 99)]) == nil, "another app cannot become the anchor")
+    expect(WindowAnchor.selectWindow([window(20)], ownerPIDs: [], primaryTop: 1080) == nil, "hidden or exited Codex has no anchor")
+    expect(select([window(30), window(20)])?.number == 30, "frontmost visible Codex window wins among multiple windows")
+    expect(select([[:], window(0), window(20)])?.number == 20, "invalid metadata is skipped without selecting an invalid window ID")
+    print("PASS: \(count) model, geometry and window-selection checks")
 }

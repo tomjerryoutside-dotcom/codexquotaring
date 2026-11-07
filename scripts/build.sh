@@ -17,9 +17,8 @@ import plistlib,sys
 with open(sys.argv[1], 'wb') as f:
     plistlib.dump({'CFBundleIdentifier':'local.zhumo.quota-ring', 'CFBundleName':'额度环',
       'CFBundleDisplayName':'额度环', 'CFBundleExecutable':'QuotaRing', 'CFBundlePackageType':'APPL',
-      'CFBundleShortVersionString':'0.1.2', 'CFBundleVersion':'3', 'LSMinimumSystemVersion':'13.0',
-      'LSUIElement':True, 'NSHighResolutionCapable':True,
-      'NSAccessibilityUsageDescription':'只读取 Codex 前台窗口位置和尺寸，让额度环跟随窗口。'}, f)
+      'CFBundleShortVersionString':'0.1.3', 'CFBundleVersion':'4', 'LSMinimumSystemVersion':'13.0',
+      'LSUIElement':True, 'NSHighResolutionCapable':True}, f)
 PY
 /usr/bin/codesign --force --sign - --identifier local.zhumo.quota-ring "$app_dir"
 /usr/bin/codesign --verify --strict "$app_dir"
