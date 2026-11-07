@@ -99,24 +99,31 @@ final class RingView: NSView {
 
 final class DetailsView: NSView {
     var snapshot: QuotaSnapshot?
+    var apiBalance: APIBalanceSnapshot?
+    var apiStatus: String?
     var light = false
     var error: String?
     override var isFlipped: Bool { true }
-    private var rows: [(String, String)] {
+    var rows: [(String, String)] {
         [("重置时间", snapshot?.resetAt.map { QuotaSnapshot.dateText($0) } ?? "暂不可用"),
          ("距离重置", snapshot?.countdown() ?? "暂不可用"),
          ("可用重置卡", snapshot?.cardsText ?? "暂不可用"),
-         (snapshot?.expiryLabel ?? "最近到期", snapshot?.expiryText ?? "暂不可用")]
+         (snapshot?.expiryLabel ?? "最近到期", snapshot?.expiryText ?? "暂不可用"),
+         ("剩余额度点", snapshot?.creditBalanceText ?? "暂不可用"),
+         ("API 余额", apiBalance?.amountText ?? "尚未同步"),
+         ("API 核实于", apiBalance?.verifiedText ?? "从菜单栏手动同步")]
     }
     private func width(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)]).width)
     }
     private var remainingText: String { snapshot?.remaining == nil ? "暂不可用" : "剩余 \(snapshot!.ringText)%" }
     private var labelWidth: CGFloat { rows.map { width($0.0, size: 11) }.max() ?? 55 }
+    private var footer: String? { [error, apiStatus].compactMap { $0 }.isEmpty ? nil : [error, apiStatus].compactMap { $0 }.joined(separator: "；") }
+    private var footerY: CGFloat { CGFloat(44 + rows.count*24 + 3) }
     var preferredSize: NSSize {
         let values = rows.map { width($0.1, size: 12, weight: .medium) }.max() ?? 120
         let header = width("Codex 周额度", size: 13, weight: .semibold) + width(remainingText, size: 10) + 20
-        return NSSize(width: max(header, labelWidth + 12 + values) + 24, height: error == nil ? 144 : 178)
+        return NSSize(width: max(header, labelWidth + 12 + values) + 24, height: footer == nil ? footerY+1 : footerY+35)
     }
     override func draw(_ dirtyRect: NSRect) {
         let palette = Palette.make(light: light)
@@ -135,8 +142,8 @@ final class DetailsView: NSView {
             drawText(pair.1, rect: NSRect(x: valueX, y: y, width: bounds.width-valueX-12, height: 18), size: 12, weight: .medium,
                      color: index == 1 ? Palette.accent(snapshot?.remaining, light: light) : palette.text)
         }
-        if let error {
-            drawText(error, rect: NSRect(x: 12, y: 143, width: bounds.width-24, height: 27), size: 10, color: palette.secondary)
+        if let footer {
+            drawText(footer, rect: NSRect(x: 12, y: footerY, width: bounds.width-24, height: 27), size: 10, color: palette.secondary)
         }
     }
 }

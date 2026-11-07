@@ -3,6 +3,7 @@ import ApplicationServices
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let client = QuotaClient(), anchor = WindowAnchor()
+    let apiClient = APIBalanceClient()
     let ring = OverlayPanel(size: NSSize(width: 44, height: 57), shadow: false)
     let details = OverlayPanel(size: NSSize(width: 366, height: 244), shadow: true)
     let ringView = RingView(), detailsView = DetailsView()
@@ -18,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var paused = false
     var locating = false
     var error: String?
+    var syncingAPI = false
+    var apiMenuItem: NSMenuItem?
     private var diameterSetting: Double {
         let saved = prefs.double(forKey: "diameter")
         return min(44, max(28, saved == 0 ? 36 : saved))
@@ -28,11 +31,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "").count <= 1 else { NSApp.terminate(nil); return }
         prefs.set(diameterSetting, forKey: "diameter")
         ring.contentView = ringView; details.contentView = detailsView
+        detailsView.apiBalance = APIBalanceSnapshot.load(from: prefs)
         menuItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         menuItem.button?.image = NSImage(systemSymbolName: "circle.dotted.circle", accessibilityDescription: "额度环")
         let menu = NSMenu()
-        for (name, action) in [("定位与设置…", #selector(showSettings)), ("立即刷新额度", #selector(refresh)), ("暂停／恢复显示", #selector(togglePause)), ("退出额度环", #selector(quit))] {
+        for (name, action) in [("定位与设置…", #selector(showSettings)), ("立即刷新额度", #selector(refresh)), ("同步 API 余额", #selector(syncAPIBalance)), ("暂停／恢复显示", #selector(togglePause)), ("退出额度环", #selector(quit))] {
             let item = NSMenuItem(title: name, action: action, keyEquivalent: ""); item.target = self; menu.addItem(item)
+            if action == #selector(syncAPIBalance) { apiMenuItem = item }
         }
         menuItem.menu = menu
         timer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in self?.tick() }
@@ -45,6 +50,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         refresh()
         if !prefs.bool(forKey: "calibrated") { showSettings() }
+    }
+
+    @objc func syncAPIBalance() {
+        guard !syncingAPI else { return }
+        syncingAPI = true; apiMenuItem?.title = "正在同步 API 余额…"
+        detailsView.apiStatus = "正在同步 API 余额…"; detailsView.needsDisplay = true
+        apiClient.sync { [weak self] result in
+            guard let self else { return }
+            self.syncingAPI = false; self.apiMenuItem?.title = "同步 API 余额"
+            switch result {
+            case .success(let snapshot):
+                self.detailsView.apiBalance = snapshot; self.detailsView.apiStatus = nil
+                self.statusLabel?.stringValue = "API 余额 \(snapshot.amountText)，核实于 \(snapshot.verifiedText)。"
+            case .failure(let error):
+                self.detailsView.apiStatus = self.detailsView.apiBalance == nil ? "API 同步失败，尚无核实值" : "API 同步失败，显示上次核实值"
+                self.showSettings(); self.statusLabel?.stringValue = error.localizedDescription
+            }
+            self.detailsView.needsDisplay = true
+        }
     }
 
     @objc func refresh() {
@@ -116,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func togglePause() { paused.toggle(); tick() }
     @objc func quit() { NSApp.terminate(nil) }
-    func applicationWillTerminate(_ notification: Notification) { client.stop() }
+    func applicationWillTerminate(_ notification: Notification) { client.stop(); apiClient.stop() }
 
     @objc func showSettings() {
         if let settings { settings.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
@@ -127,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let view = NSTextField(wrappingLabelWithString: text); view.font = .systemFont(ofSize: size); view.frame = NSRect(x: x, y: y, width: width, height: height); content.addSubview(view); return view
         }
         _ = label("常驻数字 · 悬停查看详情", y: 335, height: 30, size: 20)
-        _ = label("圆环中只显示数字。悬停显示重置时间、倒计时、重置卡数量和最近到期时间。点击会穿透到原控件。", y: 279, height: 46)
+        _ = label("悬停显示重置时间、重置卡、剩余额度点及 API 余额。API 余额标注核实时间，从菜单栏按需同步。", y: 279, height: 46)
         _ = label("窗口跟随已就绪，无需辅助功能授权。", y: 236, height: 25, size: 12)
         let locate = NSButton(title: "定位原控件（5 秒）", target: self, action: #selector(calibrate)); locate.bezelStyle = .rounded; locate.frame = NSRect(x: 24, y: 184, width: 190, height: 32); content.addSubview(locate)
         _ = label("点击后切回 Codex，把鼠标停在原用量圆圈中心，等待 5 秒。", x: 225, y: 177, width: 265, height: 43, size: 11)
@@ -163,12 +187,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 if CommandLine.arguments.contains("--self-test") {
     runTests()
+} else if CommandLine.arguments.contains("--sync-api-balance") {
+    let client = APIBalanceClient(); var finished = false; var resultCode: Int32 = 0
+    client.sync { result in
+        switch result {
+        case .success(let snapshot):
+            let report: [String: Any] = ["apiBalance": snapshot.amountText, "apiVerifiedAt": snapshot.verifiedText]
+            if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
+                print(String(decoding: data, as: UTF8.self))
+            }
+        case .failure(let error): print("ERROR: \(error.localizedDescription)"); resultCode = 1
+        }
+        finished = true
+    }
+    while !finished { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+    client.stop(); exit(resultCode)
 } else if CommandLine.arguments.contains("--check-data") {
     let client = QuotaClient(); var finished = false; var resultCode: Int32 = 0
     client.fetch { result in
         switch result {
         case .success(let s):
-            let report: [String: Any] = ["remaining": s.ringText, "reset": s.resetAt.map(QuotaSnapshot.dateText) ?? "unknown", "cards": s.cardsText, "firstExpiry": s.expiryText, "expiryComplete": s.expiryComplete]
+            let api = APIBalanceSnapshot.load(from: .standard)
+            let report: [String: Any] = ["remaining": s.ringText, "reset": s.resetAt.map(QuotaSnapshot.dateText) ?? "unknown", "cards": s.cardsText, "firstExpiry": s.expiryText, "expiryComplete": s.expiryComplete,
+                                       "creditBalance": s.creditBalanceText, "apiBalance": api?.amountText ?? "尚未同步", "apiVerifiedAt": api?.verifiedText ?? "尚未同步"]
             if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]), let text = String(data: data, encoding: .utf8) { print(text) }
         case .failure(let e): print("ERROR: \(e.localizedDescription)"); resultCode = 1
         }

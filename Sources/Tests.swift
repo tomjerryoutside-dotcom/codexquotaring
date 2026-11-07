@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import AppKit
 
 func runTests() {
     var count = 0
@@ -71,5 +72,39 @@ func runTests() {
     expect(WindowAnchor.selectWindow([window(20)], ownerPIDs: [], primaryTop: 1080) == nil, "hidden or exited Codex has no anchor")
     expect(select([window(30), window(20)])?.number == 30, "frontmost visible Codex window wins among multiple windows")
     expect(select([[:], window(0), window(20)])?.number == 20, "invalid metadata is skipped without selecting an invalid window ID")
-    print("PASS: \(count) model, geometry and window-selection checks")
+    func points(_ balance: Any?, unlimited: Bool = false) -> QuotaSnapshot {
+        QuotaSnapshot.parse(["rateLimitsByLimitId": ["codex": ["credits": ["balance": balance ?? NSNull(), "unlimited": unlimited]]]])
+    }
+    expect(points("62500.0000000000").creditBalanceText == "62,500 点", "credit balance uses the authoritative decimal string, not weekly percentage")
+    expect(points("0").creditBalanceText == "0 点", "an actual zero balance is displayed as zero")
+    expect(points(nil).creditBalanceText == "暂不可用", "missing point balance is not zero")
+    expect(points(nil, unlimited: true).creditBalanceText == "不限量", "unlimited credits remain distinct from an unknown numeric balance")
+    expect(points("1234.5678").creditBalanceText == "1,234.56 点", "fractional points are not rounded up")
+    expect(points("0.001").creditBalanceText == "<0.01 点", "small positive credit balance is not shown as zero")
+    expect(points(true).creditBalanceText == "暂不可用", "boolean is not a point balance")
+    expect(["-1", "NaN", "Infinity", "12usd", "1,000", ""].allSatisfy { BalanceFormat.decimal($0) == nil }, "invalid decimal strings are rejected in full")
+    let apiJSON: [String: Any] = ["amount": "12.34", "currency": "USD", "verifiedAt": now.timeIntervalSince1970]
+    let api = APIBalanceSnapshot.parse(apiJSON, now: now)!
+    expect(api.amountText == "US$12.34", "API dollars are explicitly separate from Codex points")
+    expect(api.verifiedAt == now, "API timestamp records the actual check, not time of rendering")
+    expect(APIBalanceSnapshot.parse(["amount": "0", "currency": "USD", "verifiedAt": now.timeIntervalSince1970], now: now)?.amountText == "US$0.00", "verified zero API balance remains valid")
+    expect(APIBalanceSnapshot.parse(["amount": "-12.34", "currency": "USD", "verifiedAt": now.timeIntervalSince1970], now: now)?.amountText == "-US$12.34", "negative API balance is preserved rather than clamped or discarded")
+    expect(APIBalanceSnapshot.parse(["amount": "12.34", "currency": "CNY", "verifiedAt": now.timeIntervalSince1970], now: now) == nil, "unsupported currency is not relabeled as dollars")
+    expect(APIBalanceSnapshot.parse(["amount": "12.34", "currency": "USD"], now: now) == nil, "API balance without a verification time is unavailable")
+    expect(APIBalanceSnapshot.parse(["amount": "12.34", "currency": "USD", "verifiedAt": now.addingTimeInterval(120).timeIntervalSince1970], now: now) == nil, "future-dated API balance is rejected")
+    expect(APIBalanceClient.message("arbitrary browser output", prefix: "QUOTARING_API_RESULT ") == nil, "unstructured browser output cannot become a balance")
+    if let path = ProcessInfo.processInfo.environment["QUOTARING_PREVIEW_PATH"] {
+        _ = NSApplication.shared; NSApp.setActivationPolicy(.prohibited)
+        let view = DetailsView()
+        var previewFixture = fixture
+        previewFixture["rateLimitsByLimitId"] = ["codex": ["primary": ["usedPercent": 66, "windowDurationMins": 10080, "resetsAt": 1794167539], "credits": ["balance": "62500.0000000000", "unlimited": false]]]
+        view.snapshot = QuotaSnapshot.parse(previewFixture, now: now)
+        view.apiBalance = api; view.light = true
+        view.frame = NSRect(origin: .zero, size: view.preferredSize)
+        if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: path))
+        }
+    }
+    print("PASS: \(count) model, balance, geometry and window-selection checks")
 }
