@@ -2,9 +2,7 @@
 
 macOS 原生 Codex 周额度覆盖层，当前版本 **0.1.4**。把清晰的数字圆环放在 Codex 左侧原用量控件上，鼠标悬停即可查看详细信息。
 
-<img width="1040" height="854" alt="9d95de34-ea9e-4bd5-80dc-7b0701cef855" src="https://github.com/user-attachments/assets/2c6d4f08-766b-465d-90ca-7f4780ddd4a6" />
-<img width="3648" height="2736" alt="8dcd0ac9f5876417a0bc69cab818a76e" src="https://github.com/user-attachments/assets/936639fd-bcaa-46c0-9bcb-8c77f5d8f3fa" />
-
+<img width="640" alt="额度环最新界面：周额度、重置时间、剩余额度点和 API 余额" src="docs/images/quotaring-0.1.4.jpg" />
 
 ## 功能
 
