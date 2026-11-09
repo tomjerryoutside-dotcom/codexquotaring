@@ -14,13 +14,27 @@ enum Geometry {
 }
 
 struct AnchoredWindow {
-    let number: Int
+    struct Identity: Equatable {
+        let ownerPID: pid_t
+        let number: Int
+
+        init?(_ metadata: [String: Any]) {
+            guard let pid = metadata[kCGWindowOwnerPID as String] as? Int32,
+                  let id = metadata[kCGWindowNumber as String] as? Int, id > 0 else { return nil }
+            ownerPID = pid
+            number = id
+        }
+    }
+
+    let identity: Identity
     let frame: CGRect
+    var number: Int { identity.number }
 }
 
 /// Window-server metadata only: no screenshots, window titles, or UI tree.
 final class WindowAnchor {
     let bundleID = "com.openai.codex"
+    private var target: AnchoredWindow.Identity?
 
     func visibleWindow(requireFrontmost: Bool = false) -> AnchoredWindow? {
         if requireFrontmost && NSWorkspace.shared.frontmostApplication?.bundleIdentifier != bundleID { return nil }
@@ -28,23 +42,48 @@ final class WindowAnchor {
             .filter { !$0.isHidden && !$0.isTerminated }.map { $0.processIdentifier })
         guard !pids.isEmpty, let primary = NSScreen.screens.first,
               let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
-        return Self.selectWindow(windows, ownerPIDs: pids, primaryTop: primary.frame.maxY)
+        return resolveWindow(windows, ownerPIDs: pids, primaryTop: primary.frame.maxY) {
+            CGWindowListCopyWindowInfo(.excludeDesktopElements, kCGNullWindowID) as? [[String: Any]]
+        }
     }
 
-    static func selectWindow(_ windows: [[String: Any]], ownerPIDs: Set<pid_t>, primaryTop: CGFloat) -> AnchoredWindow? {
-        // The list is front-to-back even when a different app owns the front window.
+    func resolveWindow(_ visible: [[String: Any]], ownerPIDs: Set<pid_t>, primaryTop: CGFloat,
+                       allWindows: () -> [[String: Any]]?) -> AnchoredWindow? {
+        if let target, let window = Self.selectWindow(visible, ownerPIDs: ownerPIDs, primaryTop: primaryTop, matching: target) {
+            return window
+        }
+        guard let all = allWindows() else { return nil }
+        // A minimized or off-space main window still owns the anchor.
+        if let target, ownerPIDs.contains(target.ownerPID),
+           all.contains(where: { AnchoredWindow.Identity($0) == target }) { return nil }
+        let window = Self.selectWindow(all, ownerPIDs: ownerPIDs, primaryTop: primaryTop, includeOffscreen: true)
+        target = window?.identity
+        guard let target else { return nil }
+        return Self.selectWindow(visible, ownerPIDs: ownerPIDs, primaryTop: primaryTop, matching: target)
+    }
+
+    static func selectWindow(_ windows: [[String: Any]], ownerPIDs: Set<pid_t>, primaryTop: CGFloat,
+                             matching target: AnchoredWindow.Identity? = nil,
+                             includeOffscreen: Bool = false) -> AnchoredWindow? {
+        var best: AnchoredWindow?
         for window in windows {
-            guard let pid = window[kCGWindowOwnerPID as String] as? Int32, ownerPIDs.contains(pid),
-                  (window[kCGWindowIsOnscreen as String] as? Bool) == true,
+            guard let id = AnchoredWindow.Identity(window), ownerPIDs.contains(id.ownerPID),
+                  target == nil || target == id,
+                  includeOffscreen || (window[kCGWindowIsOnscreen as String] as? Bool) == true,
                   (window[kCGWindowLayer as String] as? Int) == 0,
                   let alpha = window[kCGWindowAlpha as String] as? Double, alpha > 0,
-                  let number = window[kCGWindowNumber as String] as? Int, number > 0,
                   let bounds = window[kCGWindowBounds as String] as? [String: Any],
                   let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
                   rect.width > 200, rect.height > 200 else { continue }
-            return AnchoredWindow(number: number, frame: Geometry.cocoaRect(axOrigin: rect.origin, size: rect.size, primaryTop: primaryTop))
+            let candidate = AnchoredWindow(identity: id, frame: Geometry.cocoaRect(axOrigin: rect.origin, size: rect.size, primaryTop: primaryTop))
+            if target != nil { return candidate }
+            // Codex can put its own normal-layer observer surfaces above the main window.
+            // Prefer the largest candidate at initial binding; ties keep the frontmost one.
+            if best.map({ rect.width * rect.height > $0.frame.width * $0.frame.height }) ?? true {
+                best = candidate
+            }
         }
-        return nil
+        return best
     }
 }
 

@@ -53,11 +53,11 @@ func runTests() {
     let resized = CGRect(x: frame.minX, y: frame.minY-100, width: 1100, height: 700)
     expect(Geometry.anchor(window: resized, x: 32, bottom: 108).y == center.y-100, "anchor follows bottom edge during resize")
     func window(_ number: Int, pid: Int32 = 42, onscreen: Bool = true, layer: Int = 0,
-                alpha: Double = 1, width: CGFloat = 900) -> [String: Any] {
+                alpha: Double = 1, width: CGFloat = 900, height: CGFloat = 600) -> [String: Any] {
         [kCGWindowNumber as String: number, kCGWindowOwnerPID as String: pid,
          kCGWindowIsOnscreen as String: onscreen, kCGWindowLayer as String: layer,
          kCGWindowAlpha as String: alpha,
-         kCGWindowBounds as String: CGRect(x: -1200, y: 100, width: width, height: 600).dictionaryRepresentation]
+         kCGWindowBounds as String: CGRect(x: -1200, y: 100, width: width, height: height).dictionaryRepresentation]
     }
     func select(_ windows: [[String: Any]]) -> AnchoredWindow? {
         WindowAnchor.selectWindow(windows, ownerPIDs: [42], primaryTop: 1080)
@@ -70,8 +70,22 @@ func runTests() {
     expect(select([window(20, width: 100)]) == nil, "small auxiliary window is excluded")
     expect(select([window(20, pid: 99)]) == nil, "another app cannot become the anchor")
     expect(WindowAnchor.selectWindow([window(20)], ownerPIDs: [], primaryTop: 1080) == nil, "hidden or exited Codex has no anchor")
-    expect(select([window(30), window(20)])?.number == 30, "frontmost visible Codex window wins among multiple windows")
+    expect(select([window(30), window(20)])?.number == 30, "initial selection breaks an area tie by window order")
     expect(select([[:], window(0), window(20)])?.number == 20, "invalid metadata is skipped without selecting an invalid window ID")
+    let tracking = WindowAnchor()
+    let main = window(20, width: 720, height: 1250)
+    let observerSurfaces = [window(30, width: 373, height: 532), window(31, width: 373, height: 532)]
+    func follow(_ visible: [[String: Any]], all: [[String: Any]]? = nil) -> AnchoredWindow? {
+        tracking.resolveWindow(visible, ownerPIDs: [42], primaryTop: 1080) { all ?? visible }
+    }
+    expect(follow(observerSurfaces + [main])?.number == 20, "starting with the observer open binds to the Codex main window")
+    let largerHelper = window(40, width: 1000, height: 900)
+    let smallerMain = window(20, width: 620, height: 840)
+    expect(follow([largerHelper, smallerMain])?.frame.size == CGSize(width: 620, height: 840), "a frontmost helper does not steal the anchor after the main window resizes")
+    expect(follow(observerSurfaces, all: observerSurfaces + [window(20, onscreen: false, width: 720, height: 1250)]) == nil,
+           "hide rather than move to the observer when the bound window leaves the current desktop")
+    expect(follow(observerSurfaces + [main])?.number == 20, "returning to the desktop restores the same anchor")
+    expect(follow(observerSurfaces + [window(50)])?.number == 50, "closing the main window allows binding a replacement")
     func points(_ balance: Any?, unlimited: Bool = false) -> QuotaSnapshot {
         QuotaSnapshot.parse(["rateLimitsByLimitId": ["codex": ["credits": ["balance": balance ?? NSNull(), "unlimited": unlimited]]]])
     }

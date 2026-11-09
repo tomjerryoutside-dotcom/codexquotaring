@@ -1,6 +1,6 @@
 # 额度环 · QuotaRing
 
-macOS 原生 Codex 周额度覆盖层，当前版本 **0.1.4**。把清晰的数字圆环放在 Codex 左侧原用量控件上，鼠标悬停即可查看详细信息。
+macOS 原生 Codex 周额度覆盖层，当前版本 **0.1.5**。把清晰的数字圆环放在 Codex 左侧原用量控件上，鼠标悬停即可查看详细信息。
 
 <img width="640" alt="额度环最新界面：周额度、重置时间、剩余额度点和 API 余额" src="docs/images/quotaring-0.1.4.jpg" />
 
@@ -24,7 +24,7 @@ mkdir -p .build
 RESEARCH_TMP="$PWD/.build" /bin/bash scripts/build.sh
 ```
 
-`RESEARCH_TMP` 指定编译临时目录，也可由本机已有的容量受控构建工具提供。构建会执行 47 项模型、余额、坐标与窗口选择检查，并在临时目录生成使用测试数据的 `card-preview.png`，再生成根目录下的 `QuotaRing.app` 并进行本地临时签名（ad-hoc）。`.build` 和应用产物不进入 Git。
+`RESEARCH_TMP` 指定编译临时目录，也可由本机已有的容量受控构建工具提供。构建会执行模型、余额、坐标与窗口选择检查，并在临时目录生成使用测试数据的 `card-preview.png`，再生成根目录下的 `QuotaRing.app` 并进行本地临时签名（ad-hoc）。`.build` 和应用产物不进入 Git。
 
 ## 首次运行
 
